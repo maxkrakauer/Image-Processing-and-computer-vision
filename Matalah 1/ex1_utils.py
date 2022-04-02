@@ -17,6 +17,9 @@ import matplotlib.pyplot as plt
 LOAD_GRAY_SCALE = 1
 LOAD_RGB = 2
 
+num=0
+denom=0
+
 
 def myID() -> np.int:
     """
@@ -97,7 +100,7 @@ def transformYIQ2RGB(imgYIQ: np.ndarray) -> np.ndarray:
     return img
     pass
 
-def rgb2yiq():
+def rgb2yiq(img: np.ndarray):
     img = transformRGB2YIQ(img)
     img_flat = img[:,:,0]
     return img, img_flat
@@ -167,61 +170,77 @@ def hsitogramEqualize(imgOrig: np.ndarray) -> (np.ndarray, np.ndarray, np.ndarra
     return imEq, histOrg, histEQ 
     pass
 
-def createQuantImg():
+def createQuantImg(img_flat: np.ndarray, quant_amount: int, colors: int, z: List[int], q: List[int], quant_img_list: List[np.ndarray]):
     """
     Take img and  
     """
+    img_flat= img_flat*255
+    print("printing z: ", z)
+    print("printing q: ", q)
+    print("printing img_flat: ", img_flat)
     quant_img = np.zeros_like(img_flat)
     def setToQuant(x):
         #new_arr[((25 <= arr) & (arr <=100))] = -22
         if(x==quant_amount):
-            quant_img[((z[x] <= img) & (img <=z[x+1]))] = q[x]
+            quant_img[((z[x] <= img_flat) & (img_flat <=z[x+1]))] = q[x]
         else:
-            quant_img[((z[x] <= img) & (img <z[x+1]))] = q[x]
+            quant_img[((z[x] <= img_flat) & (img_flat <z[x+1]))] = q[x]
     vecNewImg = np.vectorize(setToQuant)
     vecNewImg(np.arange(quant_amount))
-    if(colors>2):
-        img[:,:,0] = quant_img
-        quant_img = transformYIQ2RGB(img)
-    quant_img_list.append(quant_img/255)
+    quant_img_list.append(quant_img)
+    return quant_img
     pass
 
-def calculateMSE():
+def calculateMSE(img_flat: np.ndarray, mse_list: List[float], quant_img: np.ndarray):
     pixel_amount = img_flat.shape[0]
-    mse = np.sum(np.square(img_flat-quant_img))
+    print("printing img_flat in calculatemse: ", img_flat)
+    print("printing quant_img in calculatemse: ", quant_img)
+    mse = np.sqrt(np.sum(np.square((img_flat*255)-quant_img)))/pixel_amount
     mse_list.append(mse)
     pass
 
-def readjustBounds():
+def readjustBounds(z: List[int], q: List[int], quant_amount: int):
+    print("q in readjustBounds: ", q)
+    print("z in readjustBounds: ", z)
+
     def adjustBound(x):
-        z[x+1] = (q[x]+q[x+1])/2
+        z[x+1] = round((q[x]+q[x+1])/2)
     vecAdjustBounds = np.vectorize(adjustBound)
-    vecAdjustBounds(np.arange(quant_amount))
+    vecAdjustBounds(np.arange(quant_amount-1))
+    return z
     pass
 
-def readjustQuants():
-    hist, bins = np.histogram(img, bins=np.arange(257))
-    num=0
-    denom=0
-    def integralTop(z):
-        num+=hist[z]*z
-    def integralBot(z):
-        denom+=hist[z]  
+def readjustQuants(img_flat: np.ndarray, quant_amount: int, z: List[int]):
+    q = []
+    hist, bins = np.histogram(img_flat*255, bins=np.arange(257))
+    print ("histogram inside readjustQuants", hist)
+    print(z)
+    def integralTop(i):
+        global num
+        print("num is: ", num)
+        print("i is: ",i)
+        num = num + hist[i]*i
+    def integralBot(i):
+        global denom
+        print("denom is: ", denom)
+        denom = denom+hist[i]  
     vfuncTop = np.vectorize(integralTop)
     vfuncBot = np.vectorize(integralBot)
-    for j in quant_amount: 
+    for j in range(quant_amount): 
         vfuncTop(np.arange(z[j], z[j+1]))
         vfuncBot(np.arange(z[j], z[j+1]))
         frac = -1
         if denom!=0:
             frac=round(num/denom)
             q.append(frac)
+    return q
 
 def initBounds(z:List[int], quant_amount:int) -> (List[int]):
     bound_size = 255/quant_amount
     z = np.arange(0,255,bound_size)
     z=np.around(z)
     z = np.append(z,255)
+    print ("printing z in initBounds: ", z)
     return z
 
 
@@ -235,21 +254,50 @@ def quantizeImage(imOrig: np.ndarray, nQuant: int, nIter: int) -> (List[np.ndarr
     """
     quant_amount = nQuant
     colors=imOrig.ndim
-    img = imOrig*255
-    img_flat=np.array([])
+    #img = imOrig*255
+    img = imOrig
+    img_flat=img
     if(colors>2):
-        img, img_flat = rgb2yiq()
-    img_flat = img.flatten()
-    img_flat = img_flat*255
-    hist, bins = np.histogram(img_flat, bins=np.arange(257))
+        img, img_flat = rgb2yiq(img)
+    img_flat = img_flat.flatten()
+    print("printing img_flat at start of quantizeimage: ", img_flat)
+    #img_flat = img_flat*255
     z=[]
-    w=[]
+    q=[]
+    mse_list=[]
+    quant_img_list=[]
     z = initBounds(z,quant_amount)
-    for i in nIter:
-        readjustQuants()
+    z = z.astype(int)
+    for i in range(nIter):
+        print()
+        print()
+        print("iteration ",i)
+        print()
+        print()
+        print ("q at start of for loop: ",q)
+        print ("z at start of for loop: ",z)
+        global num, denom
+        num=0
+        denom=0
+        q = readjustQuants(img_flat, quant_amount, z)
         #create the new quantisised image. 
-        createQuantImg()
-        calculateMSE()
+        quant_img = createQuantImg(img_flat, quant_amount, colors, z, q, quant_img_list)
+        calculateMSE(img_flat, mse_list, quant_img)
+        print("q before readjustbounds: ", q)
+        z = readjustBounds(z, q, quant_amount)
+        print("z after readjustBounds: ", z)
     plt.plot(mse_list)
+    for k in range(nIter):
+        quant_img_list[k] = quant_img_list[k].reshape(imOrig.shape[0], imOrig.shape[1])
+        pass
+    if(colors>2):
+        img_list=[]
+        for k in range (nIter):
+            img[:,:,0] = quant_img_list[k]
+            quant_img = transformYIQ2RGB(img)
+            img_list.append(quant_img)
+        quant_img_list=img_list
+    print("printing quant_img: ", quant_img_list)
+    print("Printing mse_list: ", mse_list)
     return quant_img_list, mse_list
     pass
